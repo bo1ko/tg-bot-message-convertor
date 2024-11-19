@@ -31,6 +31,130 @@ async def cmd_start(message: Message):
 main_btns = {"Редагувати": "edit", "Надіслати в групи": "send_to_groups"}
 
 
+class RateState(StatesGroup):
+    rate_name = State()
+    add_rate = State()
+    edit_rate = State()
+
+
+@router.message(Command("rate"))
+async def rate(message: Message, state: FSMContext):
+    await state.clear()
+    rates = await rq.orm_get_rates()
+    btns = {}
+
+    if rates:
+        for rate in rates:
+            btns[rate.currency] = f"rate_{rate.id}"
+
+    btns["Добавити валюту"] = "add_rate"
+
+    await message.answer(
+        "Виберіть валюту 👇", reply_markup=get_callback_btns(btns=btns, sizes=(1,))
+    )
+
+
+@router.callback_query(F.data == "back_rate")
+async def back_rate(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    rates = await rq.orm_get_rates()
+    btns = {}
+
+    if rates:
+        for rate in rates:
+            btns[rate.currency] = f"rate_{rate.id}"
+
+    btns["Добавити валюту"] = "add_rate"
+
+    await callback.message.edit_text(
+        "Виберіть валюту 👇", reply_markup=get_callback_btns(btns=btns, sizes=(1,))
+    )
+
+
+@router.callback_query(F.data.startswith("rate_"))
+async def rate_info(callback: CallbackQuery):
+    rate_id = int(callback.data.split("_")[-1])
+    rate = await rq.orm_get_rate(rate_id)
+
+    btns = {
+        "Змінити": f"edit_rate_{rate.id}",
+        "Видалити": f"delete_rate_{rate.id}",
+        "Назад": "back_rate",
+    }
+
+    await callback.message.edit_text(
+        f"Валюта {rate.currency}: {rate.rate}",
+        reply_markup=get_callback_btns(btns=btns),
+    )
+
+
+@router.callback_query(F.data.startswith("delete_rate_"))
+async def delete_rate(callback: CallbackQuery, state: FSMContext):
+    rate_id = int(callback.data.split("_")[-1])
+    await rq.orm_remove_rate(rate_id)
+    await callback.answer("Валюта успішно видалена")
+    await rate(callback.message, state)
+
+
+@router.callback_query(F.data.startswith("edit_rate_"))
+async def edit_rate(callback: CallbackQuery, state: FSMContext):
+    rate_id = int(callback.data.split("_")[-1])
+    rate = await rq.orm_get_rate(rate_id)
+
+    await callback.answer()
+    await callback.message.answer(f"Введіть новий курс для {rate.currency} 👇")
+    await state.update_data(rate_id=rate_id)
+    await state.set_state(RateState.edit_rate)
+
+
+@router.message(RateState.edit_rate)
+async def edit_rate(message: Message, state: FSMContext):
+    try:
+        data = await state.get_data()
+        rate_id = data.get("rate_id")
+        rate_price = float(message.text)
+
+        await rq.orm_update_rate(int(rate_id), rate_price)
+
+        await message.answer("Курс успішно змінено")
+        await state.clear()
+        await rate(message, state)
+    except ValueError:
+        await message.answer("Будь ласка, введіть коректне число.")
+
+
+@router.callback_query(F.data == "add_rate")
+async def add_rate_name(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    await callback.message.answer("Введіть назву валюти 👇")
+    await state.set_state(RateState.rate_name)
+
+
+@router.message(RateState.rate_name)
+async def add_rate_currency_first(message: Message, state: FSMContext):
+    await state.update_data(rate_name=message.text)
+    await message.answer("Введіть курс валюти 👇")
+    await state.set_state(RateState.add_rate)
+
+
+@router.message(RateState.add_rate)
+async def add_rate_currency_second(message: Message, state: FSMContext):
+    try:
+        data = await state.get_data()
+        rate_name = data.get("rate_name")
+        rate_price = float(message.text)
+
+        await rq.orm_add_rate(rate_name, rate_price)
+
+        await message.answer("Курс успішно додано")
+        await state.clear()
+        await rate(message, state)
+    except ValueError:
+        await message.answer("Будь ласка, введіть коректне число.")
+        await add_rate_currency_first(message, state)
+
+
 class ChannelIdState(StatesGroup):
     add_channel_id = State()
     remove_channel_id = State()
@@ -38,7 +162,7 @@ class ChannelIdState(StatesGroup):
 
 @router.message(
     Command("add_channel")
-)
+)  # Фільтр, що реагує тільки на повідомлення з каналу
 async def save_channel_id(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Введіть ID")
@@ -81,50 +205,76 @@ async def remove_channel_id(message: Message, state: FSMContext):
 @router.message(Command("list"))
 async def list_channels(message: Message, state: FSMContext):
     await state.clear()
-    
+
     channels = await rq.orm_get_channels()
-    channels_str = ''
-    
-    for channel in channels:
-        channels_str += f'{channel.channel_id}\n'
-        
+    channels_str = ""
+
+    if channels:
+        for channel in channels:
+            channels_str += f"{channel.channel_id}\n"
+    else:
+        channels_str = "Канали не знайдено"
+
     await message.answer(channels_str)
 
 
 @router.message(StateFilter(None))
 async def convert(message: Message, state: FSMContext, album: list[Message]):
     if not (
-        (message.photo and message.caption) or  # Окреме фото з підписом
-        (album and any(msg.caption for msg in album))  # Альбом з хоча б одним підписом
+        (message.photo and message.caption)  # Окреме фото з підписом
+        or (
+            album and any(msg.caption for msg in album)
+        )  # Альбом з хоча б одним підписом
     ):
         await message.answer("Приймаються тільки картинки або альбоми з підписом.")
         return
-    
+
     await state.clear()
 
     text = message.caption
-    response = requests.get(
-        "https://api.privatbank.ua/p24api/pubinfo?exchange&coursid=11"
-    )
 
-    if not response.ok:
-        await message.answer("Помилка під час отримання курсу валют")
-        return
-
-    data = response.json()
-    exchange_rate = float(data[1]["buy"])
-    updated_text = replace_prices_with_uah(text, exchange_rate)
-    
     media_group = []
     for msg in album:
         if msg.photo:
             file_id = msg.photo[-1].file_id
             media_group.append(InputMediaPhoto(media=file_id))
-    
-    
+
     await message.answer_media_group(media=media_group)
-    await message.answer(updated_text, reply_markup=get_callback_btns(btns=main_btns))
-    await state.update_data(media_group=media_group, lines=updated_text.split("\n"))
+    await message.answer(text)
+    await state.update_data(media_group=media_group, text=text)
+    await select_currency(message, state)
+
+
+async def select_currency(message: Message, state: FSMContext):
+    btns = {}
+
+    rates = await rq.orm_get_rates()
+
+    if rates:
+        for rate in rates:
+            btns[f"{rate.currency} - {rate.rate}"] = f"select_rate_{rate.id}"
+    else:
+        await message.answer("Валюти не знайдено")
+        await state.clear()
+        return
+
+    await message.answer(
+        "Виберіть валюту 👇", reply_markup=get_callback_btns(btns=btns)
+    )
+
+
+@router.callback_query(F.data.startswith("select_rate_"))
+async def select_rate(callback: CallbackQuery, state: FSMContext):
+    rate_id = int(callback.data.split("_")[-1])
+    rate = await rq.orm_get_rate(rate_id)
+    text = await state.get_value("text")
+    updated_text = replace_prices_with_uah(text, rate.rate)
+
+    await callback.message.edit_text(
+        updated_text, reply_markup=get_callback_btns(btns=main_btns)
+    )
+    await state.update_data(lines=updated_text.split("\n"))
+
 
 @router.callback_query(F.data == "send_to_groups")
 async def send_to_groups(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -139,24 +289,37 @@ async def send_to_groups(callback: CallbackQuery, state: FSMContext, bot: Bot):
     channels = await rq.orm_get_channels()
 
     for channel in channels:
-        if re.match(r'^[0-9-]+$', channel.channel_id):
+        if re.match(r"^[0-9-]+$", channel.channel_id):
             try:
                 media_group_with_caption = [
-                    InputMediaPhoto(media=item.media, caption="\n".join(lines)) if idx == 0 else item
+                    (
+                        InputMediaPhoto(media=item.media, caption="\n".join(lines))
+                        if idx == 0
+                        else item
+                    )
                     for idx, item in enumerate(media_group)
                 ]
-                await bot.send_media_group(chat_id=int(channel.channel_id), media=media_group_with_caption)
+                await bot.send_media_group(
+                    chat_id=int(channel.channel_id), media=media_group_with_caption
+                )
             except Exception as e:
-                await callback.message.answer(f"Помилка надсилання до каналу {channel.channel_id}")
+                await callback.message.answer(
+                    f"Помилка надсилання до каналу {channel.channel_id}"
+                )
         else:
             await callback.message.answer(f"Канал {channel.channel_id} не знайдено")
 
     await callback.message.edit_text("Повідомлення надіслані")
+    await state.clear()
+
 
 @router.callback_query(F.data == "back")
 async def back(callback: CallbackQuery, state: FSMContext):
     lines = await state.get_value("lines")
-    await callback.message.edit_text("\n".join(lines), reply_markup=get_callback_btns(btns=main_btns))
+    await callback.message.edit_text(
+        "\n".join(lines), reply_markup=get_callback_btns(btns=main_btns)
+    )
+
 
 @router.callback_query(F.data == "edit")
 async def edit(callback: CallbackQuery, state: FSMContext):
@@ -185,7 +348,7 @@ async def add_line(callback: CallbackQuery, state: FSMContext):
 
     for count, line in enumerate(numbered_lines):
         btns[line] = f"line_{count+1}"
-    
+
     btns["Назад"] = "back"
 
     await callback.message.edit_text(
@@ -245,7 +408,7 @@ async def add_bold(callback: CallbackQuery, state: FSMContext):
 
     for count, line in enumerate(numbered_lines):
         btns[line] = f"add_bold_{count}"
-    
+
     btns["Назад"] = "back"
 
     await callback.message.edit_text(

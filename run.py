@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-
+    await create_db()
+    
     bot = Bot(
         token=os.getenv("BOT_TOKEN"),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
