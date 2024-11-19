@@ -65,7 +65,7 @@ async def create_tables():
 
 
 # ---------- ADD USER BY ID ----------
-async def orm_add_user(tg_id: int, name: str):
+async def orm_add_user(tg_id: int, name: str = None):
     async with session_maker() as session:
         async with session.begin():
             try:
@@ -139,7 +139,12 @@ async def orm_is_admin(tg_id: int):
                 query = select(User).where(User.tg_id == tg_id)
                 result = await session.execute(query)
                 user = result.scalar()
-                return user.is_admin
+                
+                if user:
+                    return user.is_admin
+                else:
+                    await orm_add_user(tg_id)
+                    return False
             except:
                 return None
 

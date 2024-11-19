@@ -1,0 +1,12 @@
+[Unit]
+Description=My TG Bot
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/home/username/tg-bot-message-convertor/.venv/bin/python /home/username/tg-bot-message-convertor/run.py
+WorkingDirectory=/home/username/tg-bot-message-convertor
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

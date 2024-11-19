@@ -19,11 +19,10 @@ from app.utils import replace_prices_with_uah
 load_dotenv()
 
 router = Router()
-# router.message.filter(IsAdmin())
+router.message.filter(IsAdmin())
 router.message.middleware(AlbumMiddleware())
 
 
-# admin /admin
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer("Введіть повідомлення, яке потрібно конвертувати 👇")
@@ -39,7 +38,7 @@ class ChannelIdState(StatesGroup):
 
 @router.message(
     Command("add_channel")
-)  # Фільтр, що реагує тільки на повідомлення з каналу
+)
 async def save_channel_id(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Введіть ID")
