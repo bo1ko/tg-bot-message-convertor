@@ -1,0 +1,6 @@
+.venv
+.vscode
+.env
+my_base.db
+bot.log
+__pycache__
